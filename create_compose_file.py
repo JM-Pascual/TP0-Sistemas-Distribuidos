@@ -10,7 +10,6 @@ server_config = """
     entrypoint: python3 /main.py
     environment:
       - PYTHONUNBUFFERED=1
-      - LOGGING_LEVEL=DEBUG
     networks:
       - testing_net
     volumes:
@@ -34,7 +33,6 @@ def get_client_config(client_id):
     entrypoint: /client
     environment:
       - CLI_ID={client_id}
-      - CLI_LOG_LEVEL=DEBUG
     networks:
       - testing_net
     depends_on:
