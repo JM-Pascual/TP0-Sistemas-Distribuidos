@@ -10,9 +10,9 @@ services:
     networks:
       - testing_net
     volumes:
-        - type: bind
-          source: ./server/config.ini
-          target: /config.ini
+      - type: bind
+        source: ./server/config.ini
+        target: /config.ini
 
   client1:
     container_name: client1
