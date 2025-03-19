@@ -36,14 +36,14 @@ def get_client_config(client_id):
     networks:
       - testing_net
     depends_on:
-        - server
+      - server
 """
 
-def create_docker_compose(num_extra_clients, output_file_name):
+def create_docker_compose(number_of_clients, output_file_name):
     with open(output_file_name, "w") as f:
         f.write(file_header)
         f.write(server_config)
-        for i in range(num_extra_clients):
+        for i in range(number_of_clients):
             f.write(get_client_config(i+1))
         f.write(network_config)
 
@@ -55,8 +55,8 @@ if __name__ == "__main__":
     num_extra_clients = int(sys.argv[2])
     output_file_name = sys.argv[1]
 
-    if num_extra_clients <= 1:
-        print("Number of extra clients must be greater than 1")
+    if num_extra_clients < 1:
+        print("Number of extra clients must be greater or equal than 1")
         sys.exit(1)
 
     create_docker_compose(num_extra_clients, output_file_name)
