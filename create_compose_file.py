@@ -13,6 +13,10 @@ server_config = """
       - LOGGING_LEVEL=DEBUG
     networks:
       - testing_net
+    volumes:
+      - type: bind
+        source: ./server/config.ini
+        target: /config.ini
 """
 
 network_config = """
@@ -37,6 +41,10 @@ def get_client_config(client_id):
       - testing_net
     depends_on:
       - server
+    volumes:
+      - type: bind
+        source: ./client/config.yaml
+        target: /config.yaml
 """
 
 def create_docker_compose(number_of_clients, output_file_name):
