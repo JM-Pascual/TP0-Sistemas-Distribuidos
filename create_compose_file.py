@@ -54,11 +54,11 @@ if __name__ == "__main__":
         print("Usage: python3 create_compose_file.py <output_file_name> <num_extra_clients>")
         sys.exit(1)
 
-    num_extra_clients = int(sys.argv[2])
+    clients_number = int(sys.argv[2])
     output_file_name = sys.argv[1]
 
-    if num_extra_clients < 1:
-        print("Number of extra clients must be greater or equal than 1")
+    if clients_number < 0:
+        print("Number of extra clients must be greater or equal than 0")
         sys.exit(1)
 
-    create_docker_compose(num_extra_clients, output_file_name)
+    create_docker_compose(clients_number, output_file_name)
