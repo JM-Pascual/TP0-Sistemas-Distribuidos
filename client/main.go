@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/op/go-logging"
@@ -90,6 +92,13 @@ func PrintConfig(v *viper.Viper) {
 	)
 }
 
+func signalHandler(client *common.Client, signalsChannel chan os.Signal, finishChannel chan bool) {
+	signal := <-signalsChannel
+	client.FreeResources()
+	log.Infof("action: signal_handler | result: success | signal: %v ", signal)
+	finishChannel <- true
+}
+
 func main() {
 	v, err := InitConfig()
 	if err != nil {
@@ -103,6 +112,15 @@ func main() {
 	// Print program config with debugging purposes
 	PrintConfig(v)
 
+	// Creo el canal mediante el cual voy a comunicar las señales de interrupción
+	signalsChannel := make(chan os.Signal, 1)
+
+	// Creo el canal mediante el cual anuncio el fin del client loop
+	finishChannel := make(chan bool, 1)
+
+	// Utilizo el canal como medio de comunicación para finalizar el client loop
+	signal.Notify(signalsChannel, syscall.SIGINT, syscall.SIGTERM)
+
 	clientConfig := common.ClientConfig{
 		ServerAddress: v.GetString("server.address"),
 		ID:            v.GetString("id"),
@@ -111,5 +129,9 @@ func main() {
 	}
 
 	client := common.NewClient(clientConfig)
-	client.StartClientLoop()
+
+	// Creo un goroutine que se encargue de manejar las señales de interrupción
+	go signalHandler(client, signalsChannel, finishChannel)
+
+	client.StartClientLoop(finishChannel)
 }

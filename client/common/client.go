@@ -4,9 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"net"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/op/go-logging"
@@ -53,28 +50,16 @@ func (c *Client) createClientSocket() error {
 	return err
 }
 
+// Función de liberado de recursos
+// Exportada para poder ser utilizada en main.go
+func (c *Client) FreeResources() {
+	if c.conn != nil {
+		c.conn.Close()
+	}
+}
+
 // StartClientLoop Send messages to the client until some time threshold is met
-func (c *Client) StartClientLoop() {
-
-	// Creo el canal mediante el cual voy a comunicar las señales de interrupción
-	signalsChannel := make(chan os.Signal, 1)
-
-	// Creo el canal mediante el cual anuncio el fin del client loop
-	finishChannel := make(chan bool, 1)
-
-	// Utilizo el canal como medio de comunicación para finalizar el client loop
-	signal.Notify(signalsChannel, syscall.SIGINT, syscall.SIGTERM)
-
-	// Creo un goroutine que se encargue de recibir las señales de interrupción
-	go func() {
-		signal := <-signalsChannel
-		if c.conn != nil {
-			c.conn.Close()
-		}
-		log.Infof("action: signal_handler | result: success | signal: %v | client_id: %v", signal, c.config.ID)
-		finishChannel <- true
-	}()
-
+func (c *Client) StartClientLoop(finishChannel chan bool) {
 	// Defino la variable que va a contener el número de mensaje enviado fuera del loop
 	msgID := 1
 
@@ -90,9 +75,9 @@ func (c *Client) StartClientLoop() {
 				finishChannel <- true
 				break
 			}
-			msgID = msgID + 1
 
-			// Create the connection the server in every loop iteration. Send an
+			// Create the connection the server in every loop iteration.
+			// Pickup errors if any
 			err := c.createClientSocket()
 
 			if err != nil {
@@ -126,6 +111,9 @@ func (c *Client) StartClientLoop() {
 				c.config.ID,
 				msg,
 			)
+
+			// Incremento del número de mensaje una vez finalizado un loop
+			msgID = msgID + 1
 
 			// Wait a time between sending one message and the next one
 			time.Sleep(c.config.LoopPeriod)
