@@ -11,6 +11,12 @@ class Server:
         self._server_socket.listen(listen_backlog)
         self._server_working = False
 
+        # Seteo del handler para la señal de SIGTERM
+        signal.signal(signal.SIGTERM, self.graceful_shutdown)
+
+        # Seteo del handler para la señal de SIGINT
+        signal.signal(signal.SIGINT, self.graceful_shutdown)
+
     def graceful_shutdown(self):
         # Cierre del socket del servidor
         self._server_socket.close()
@@ -28,12 +34,6 @@ class Server:
 
         # TODO: Modify this program to handle signal to graceful shutdown
         # the server
-
-        # Seteo del handler para la señal de SIGTERM
-        signal.signal(signal.SIGTERM, self.graceful_shutdown)
-
-        # Seteo del handler para la señal de SIGINT
-        signal.signal(signal.SIGINT, self.graceful_shutdown)
 
         self._server_working = True
 
