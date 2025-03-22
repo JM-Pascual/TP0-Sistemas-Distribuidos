@@ -17,11 +17,11 @@ class Server:
         # Seteo del handler para la señal de SIGINT
         signal.signal(signal.SIGINT, self.graceful_shutdown)
 
-    def graceful_shutdown(self):
+    def graceful_shutdown(self, signum, frame):
         # Cierre del socket del servidor
         self._server_socket.close()
         # Loggeo de la acción
-        logging.info('action: graceful_shutdown | result: success')
+        logging.info('action: graceful_shutdown | result: success | signal number: {}'.format(signum))
 
     def run(self):
         """
