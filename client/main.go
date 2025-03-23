@@ -15,6 +15,16 @@ import (
 	"github.com/7574-sistemas-distribuidos/docker-compose-init/client/common"
 )
 
+const (
+	// Constants used to define the fields of the bet
+	AGENCY_NUMBER     = "CLI_ID"
+	BET_USER_NAME     = "NOMBRE"
+	BET_USER_LASTNAME = "APELLIDO"
+	BET_USER_DOCUMENT = "DOCUMENTO"
+	BET_USER_BIRTH    = "NACIMIENTO"
+	BET_NUMBER        = "NUMERO"
+)
+
 var log = logging.MustGetLogger("log")
 
 // InitConfig Function that uses viper library to parse configuration parameters.
@@ -99,6 +109,27 @@ func signalHandler(client *common.Client, signalsChannel chan os.Signal, finishC
 	finishChannel <- true
 }
 
+func getBetEnvVariables() map[string]string {
+	betInfo := make(map[string]string)
+
+	betInfo[AGENCY_NUMBER] = os.Getenv(AGENCY_NUMBER)
+	betInfo[BET_USER_NAME] = os.Getenv(BET_USER_NAME)
+	betInfo[BET_USER_LASTNAME] = os.Getenv(BET_USER_LASTNAME)
+	betInfo[BET_USER_DOCUMENT] = os.Getenv(BET_USER_DOCUMENT)
+	betInfo[BET_USER_BIRTH] = os.Getenv(BET_USER_BIRTH)
+	betInfo[BET_NUMBER] = os.Getenv(BET_NUMBER)
+
+	// If any of the required variables is not set, return an error
+	for key, value := range betInfo {
+		if value == "" {
+			log.Criticalf("action: get_bet_env_variables | result: fail | error: %s not set", key)
+			os.Exit(1)
+		}
+	}
+
+	return betInfo
+}
+
 func main() {
 	v, err := InitConfig()
 	if err != nil {
@@ -112,14 +143,16 @@ func main() {
 	// Print program config with debugging purposes
 	PrintConfig(v)
 
-	// Creo el canal mediante el cual voy a comunicar las señales de interrupción
+	// Channel used to receive signals
 	signalsChannel := make(chan os.Signal, 1)
 
-	// Creo el canal mediante el cual anuncio el fin del client loop
+	// Channel used to announce the end of the client loop
 	finishChannel := make(chan bool, 1)
 
-	// Utilizo el canal como medio de comunicación para finalizar el client loop
+	// Assign the signalsChannel to receive SIGINT and SIGTERM signals
 	signal.Notify(signalsChannel, syscall.SIGINT, syscall.SIGTERM)
+
+	betInfo := getBetEnvVariables()
 
 	clientConfig := common.ClientConfig{
 		ServerAddress: v.GetString("server.address"),
@@ -128,9 +161,9 @@ func main() {
 		LoopPeriod:    v.GetDuration("loop.period"),
 	}
 
-	client := common.NewClient(clientConfig)
+	client := common.NewClient(clientConfig, betInfo)
 
-	// Creo un goroutine que se encargue de manejar las señales de interrupción
+	// Create a goroutine to handle signals and notify the client loop to finish
 	go signalHandler(client, signalsChannel, finishChannel)
 
 	client.StartClientLoop(finishChannel)

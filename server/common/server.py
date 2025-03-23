@@ -2,6 +2,19 @@ import signal
 import socket
 import logging
 
+from .utils import Bet, store_bets
+
+MAX_RECV_BUFFER_SIZE = 1024
+FIELD_DELIMITER = "#"
+END_OF_MESSAGE_DELIMITER = "\n"
+
+CLIENT_ID_INDEX = 0
+BET_USER_NAME_INDEX = 1
+BET_USER_LASTNAME_INDEX = 2
+BET_USER_DOCUMENT_INDEX = 3
+BET_USER_BIRTH_INDEX = 4
+BET_NUMBER_INDEX = 5
+
 
 class Server:
     def __init__(self, port, listen_backlog):
@@ -33,7 +46,6 @@ class Server:
         """
 
         # TODO: Modify this program to handle signal to graceful shutdown
-        # the server
 
         self._server_working = True
 
@@ -44,6 +56,65 @@ class Server:
         except OSError as e:
             logging.error(f"action: accepting new connections | result: fail | error: {e}")
 
+    def _recv_all_bet_data(self, client_sock):
+        raw_bet_data = bytes(client_sock.recv(MAX_RECV_BUFFER_SIZE))
+
+        while raw_bet_data[-1] != ord(END_OF_MESSAGE_DELIMITER):
+            raw_bet_data += bytes(client_sock.recv(MAX_RECV_BUFFER_SIZE))
+
+        return raw_bet_data
+
+    def _decode_submitted_bet(self, msg):
+        """
+        Decodes the message received from the client
+
+        The message received from the client is a string with the following format:
+        "first_name#last_name#document#birthdate#bet_number\n"
+
+        "\n" beign the end of message delimiter.
+
+        This function receives the message and returns a dictionary with the following keys:
+        - first_name: str
+        - last_name: str
+        - document: str
+        - birthdate: str
+        - number: str
+        """
+
+        return msg.rstrip(END_OF_MESSAGE_DELIMITER).split(FIELD_DELIMITER)
+
+    def _build_bet_object(self, decoded_message_array):
+        """
+        Builds a Bet object from the decoded message array
+
+        The message array is a list with the following format:
+        [agency_number, first_name, last_name, document, birthdate, number]
+
+        This function receives the message array and returns a Bet object
+        """
+
+        return Bet(
+            decoded_message_array[CLIENT_ID_INDEX],
+            decoded_message_array[BET_USER_NAME_INDEX],
+            decoded_message_array[BET_USER_LASTNAME_INDEX],
+            decoded_message_array[BET_USER_DOCUMENT_INDEX],
+            decoded_message_array[BET_USER_BIRTH_INDEX],
+            decoded_message_array[BET_NUMBER_INDEX]
+        )
+
+    def _send_all_bet_confirmation_data(self, client_sock, decoded_bet_message):
+        """
+        Sends the confirmation message to the client by echoing the received message
+        """
+
+        encoded_message = bytes(f"{FIELD_DELIMITER.join(decoded_bet_message)}{END_OF_MESSAGE_DELIMITER}".encode('utf-8'))
+        message_byte_len = len(encoded_message)
+
+        total_bytes_sent = client_sock.send(encoded_message)
+
+        while total_bytes_sent < message_byte_len:
+            total_bytes_sent += client_sock.send(encoded_message[total_bytes_sent:])
+
     def __handle_client_connection(self, client_sock):
         """
         Read message from a specific client socket and closes the socket
@@ -53,11 +124,18 @@ class Server:
         """
         try:
             # TODO: Modify the receive to avoid short-reads
-            msg = client_sock.recv(1024).rstrip().decode('utf-8')
-            addr = client_sock.getpeername()
-            logging.info(f'action: receive_message | result: success | ip: {addr[0]} | msg: {msg}')
+            msg = self._recv_all_bet_data(client_sock)
+
+            decoded_bet_message = self._decode_submitted_bet(msg.decode('utf-8').rstrip(END_OF_MESSAGE_DELIMITER))
+
+            store_bets([self._build_bet_object(decoded_bet_message)])
+
+            logging.info(f'action: apuesta_almacenada | result: success | dni: {decoded_bet_message[BET_USER_DOCUMENT_INDEX]} | numero: {decoded_bet_message[BET_NUMBER_INDEX]}')
+
             # TODO: Modify the send to avoid short-writes
-            client_sock.send("{}\n".format(msg).encode('utf-8'))
+
+            self._send_all_bet_confirmation_data(client_sock, decoded_bet_message)
+
         except OSError as e:
             logging.error(f"action: receive_message | result: fail | error: {e}")
         finally:

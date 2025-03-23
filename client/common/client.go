@@ -11,6 +11,19 @@ import (
 
 var log = logging.MustGetLogger("log")
 
+const (
+	// Constants used to define the fields of the bet
+	BET_USER_NAME     = "NOMBRE"
+	BET_USER_LASTNAME = "APELLIDO"
+	BET_USER_DOCUMENT = "DOCUMENTO"
+	BET_USER_BIRTH    = "NACIMIENTO"
+	BET_NUMBER        = "NUMERO"
+)
+
+const (
+	END_OF_MESSAGE_DELIMITER = '\n'
+)
+
 // ClientConfig Configuration used by the client
 type ClientConfig struct {
 	ID            string
@@ -21,15 +34,17 @@ type ClientConfig struct {
 
 // Client Entity that encapsulates how
 type Client struct {
-	config ClientConfig
-	conn   net.Conn
+	config  ClientConfig
+	conn    net.Conn
+	BetInfo map[string]string
 }
 
 // NewClient Initializes a new client receiving the configuration
 // as a parameter
-func NewClient(config ClientConfig) *Client {
+func NewClient(config ClientConfig, betInfo map[string]string) *Client {
 	client := &Client{
-		config: config,
+		config:  config,
+		BetInfo: betInfo,
 	}
 	return client
 }
@@ -50,12 +65,28 @@ func (c *Client) createClientSocket() error {
 	return err
 }
 
-// Función de liberado de recursos
-// Exportada para poder ser utilizada en main.go
+// Function to free resources used by the client
+// Exported to be used by the main function
 func (c *Client) FreeResources() {
 	if c.conn != nil {
 		c.conn.Close()
 	}
+}
+
+// The format for serialized bet info is:
+// field1#field2#...#field-n@
+// Meaning that the data separator is a hash (#) and the end of the line is a new line character (\n)
+
+func (c *Client) getSerializedBetInfo() string {
+	return fmt.Sprintf(
+		"%s#%s#%s#%s#%s#%s\n",
+		c.config.ID,
+		c.BetInfo[BET_USER_NAME],
+		c.BetInfo[BET_USER_LASTNAME],
+		c.BetInfo[BET_USER_DOCUMENT],
+		c.BetInfo[BET_USER_BIRTH],
+		c.BetInfo[BET_NUMBER],
+	)
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
@@ -90,13 +121,26 @@ func (c *Client) StartClientLoop(finishChannel chan bool) {
 			}
 
 			// TODO: Modify the send to avoid short-write
-			fmt.Fprintf(
-				c.conn,
-				"[CLIENT %v] Message N°%v\n",
-				c.config.ID,
-				msgID,
-			)
-			msg, err := bufio.NewReader(c.conn).ReadString('\n')
+			// Send the serialized bet info to the server
+			// First get the byte len of the serialized bet info
+			serializedMessage := c.getSerializedBetInfo()
+			totalBytesLen := len(serializedMessage)
+			bytesSent := 0
+
+			bytesSent, err = fmt.Fprintf(c.conn, "%s", serializedMessage)
+
+			for bytesSent < totalBytesLen {
+				bytesSent, err = fmt.Fprintf(c.conn, "%s", serializedMessage[bytesSent:])
+				if err != nil {
+					log.Errorf("action: send_serialized_message | result: fail | client_id: %v | error: %v",
+						c.config.ID,
+						err,
+					)
+					return
+				}
+			}
+
+			_, err = bufio.NewReader(c.conn).ReadString(END_OF_MESSAGE_DELIMITER)
 			c.conn.Close()
 
 			if err != nil {
@@ -107,12 +151,12 @@ func (c *Client) StartClientLoop(finishChannel chan bool) {
 				return
 			}
 
-			log.Infof("action: receive_message | result: success | client_id: %v | msg: %v",
-				c.config.ID,
-				msg,
+			log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v",
+				c.BetInfo[BET_USER_DOCUMENT],
+				c.BetInfo[BET_NUMBER],
 			)
 
-			// Incremento del número de mensaje una vez finalizado un loop
+			// Message ID incremented after successful loop iteration
 			msgID = msgID + 1
 
 			// Wait a time between sending one message and the next one

@@ -33,6 +33,11 @@ def get_client_config(client_id):
     entrypoint: /client
     environment:
       - CLI_ID={client_id}
+      - NOMBRE=Juan
+      - APELLIDO=Pascual
+      - DOCUMENTO=12345
+      - NACIMIENTO=2000-08-31
+      - NUMERO=777
     networks:
       - testing_net
     depends_on:
