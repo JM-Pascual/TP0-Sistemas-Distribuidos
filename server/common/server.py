@@ -24,28 +24,25 @@ class Server:
         self._server_socket.listen(listen_backlog)
         self._server_working = False
 
-        # Seteo del handler para la señal de SIGTERM
+        # Declaration of the SIGTERM handler
         signal.signal(signal.SIGTERM, self.graceful_shutdown)
 
-        # Seteo del handler para la señal de SIGINT
+        # Declaration of the SIGINT handler
         signal.signal(signal.SIGINT, self.graceful_shutdown)
 
     def graceful_shutdown(self, signum, frame):
-        # Cierre del socket del servidor
+        # Closure of the server socket
         self._server_socket.close()
-        # Loggeo de la acción
+        # Log the shutdown action
         logging.info('action: graceful_shutdown | result: success | signal number: {}'.format(signum))
 
     def run(self):
         """
-        Dummy Server loop
+        Agency Server loop
 
-        Server that accept a new connections and establishes a
-        communication with a client. After client with communucation
-        finishes, servers starts to accept new connections again
+        The server will listen and accept new connections from clients
+        Then the bets reported will be stored
         """
-
-        # TODO: Modify this program to handle signal to graceful shutdown
 
         self._server_working = True
 
@@ -57,6 +54,9 @@ class Server:
             logging.error(f"action: accepting new connections | result: fail | error: {e}")
 
     def _recv_all_bet_data(self, client_sock):
+        """
+        Receives all the data from the client, handling short-reads
+        """
         raw_bet_data = bytes(client_sock.recv(MAX_RECV_BUFFER_SIZE))
 
         while raw_bet_data[-1] != ord(END_OF_MESSAGE_DELIMITER):
@@ -123,7 +123,6 @@ class Server:
         client socket will also be closed
         """
         try:
-            # TODO: Modify the receive to avoid short-reads
             msg = self._recv_all_bet_data(client_sock)
 
             decoded_bet_message = self._decode_submitted_bet(msg.decode('utf-8').rstrip(END_OF_MESSAGE_DELIMITER))
@@ -131,8 +130,6 @@ class Server:
             store_bets([self._build_bet_object(decoded_bet_message)])
 
             logging.info(f'action: apuesta_almacenada | result: success | dni: {decoded_bet_message[BET_USER_DOCUMENT_INDEX]} | numero: {decoded_bet_message[BET_NUMBER_INDEX]}')
-
-            # TODO: Modify the send to avoid short-writes
 
             self._send_all_bet_confirmation_data(client_sock, decoded_bet_message)
 
