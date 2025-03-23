@@ -91,7 +91,7 @@ func (c *Client) getSerializedBetInfo() string {
 
 // StartClientLoop Send messages to the client until some time threshold is met
 func (c *Client) StartClientLoop(finishChannel chan bool) {
-	// Defino la variable que va a contener el número de mensaje enviado fuera del loop
+	// The message ID is defined outside the loop, and incremented inside of it while there are iterations remaining
 	msgID := 1
 
 	// There is an autoincremental msgID to identify every message sent
@@ -120,7 +120,6 @@ func (c *Client) StartClientLoop(finishChannel chan bool) {
 				break
 			}
 
-			// TODO: Modify the send to avoid short-write
 			// Send the serialized bet info to the server
 			// First get the byte len of the serialized bet info
 			serializedMessage := c.getSerializedBetInfo()
