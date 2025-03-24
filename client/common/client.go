@@ -181,12 +181,6 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 			}
 
 			sentBets += messagesAddedToBatch
-
-			log.Infof("action: apuestas_enviada | result: success | client_id: %v | batch_size: %v | total_so_far: %v",
-				c.config.ID,
-				messagesAddedToBatch,
-				sentBets,
-			)
 		}
 
 		log.Infof("action: apuesta_recibida | result: success | cantidad: %v",
