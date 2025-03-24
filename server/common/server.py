@@ -144,14 +144,14 @@ class Server:
             bets_stored = len(bets_received)
             self._total_bets_registered += bets_stored
 
-            logging.info(f'action: apuesta_recibida | result: success | cantidad: {bets_stored}.')
+            logging.info(f'action: apuesta_recibida | result: success | cantidad: {bets_stored}')
 
             self._send_all_batch_confirmation_data(client_sock, bets_stored)
 
         except OSError as e:
             logging.error(f"action: apuesta_recibida | result: fail | cantidad: {self._total_bets_registered} | error: {e}")
         finally:
-            logging.info(f'action: apuestas_recibidas | result: success | cantidad: {self._total_bets_registered}.')
+            logging.info(f'action: apuestas_recibidas | result: success | cantidad: {self._total_bets_registered}')
             client_sock.close()
 
     def __accept_new_connection(self):
