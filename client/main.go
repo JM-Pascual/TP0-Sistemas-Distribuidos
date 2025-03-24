@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/7574-sistemas-distribuidos/docker-compose-init/client/common"
 )
@@ -195,4 +196,7 @@ func main() {
 	go parseBetFile(BETS_FILE_PATH, betsChannel)
 
 	client.StartClientLoop(finishChannel, betsChannel)
+
+	// Wait a time before exiting, allows for Docker to print the logs that are tested
+	time.Sleep(1000 * time.Millisecond)
 }

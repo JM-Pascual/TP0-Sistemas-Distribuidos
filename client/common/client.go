@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/op/go-logging"
 	"net"
+	"time"
 )
 
 var log = logging.MustGetLogger("log")
@@ -187,4 +188,7 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 			sentBets,
 		)
 	}
+
+	// Wait a time before exiting, allows for Docker to print the logs that are tested
+	time.Sleep(1000 * time.Millisecond)
 }
