@@ -1,16 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"github.com/op/go-logging"
+	"github.com/spf13/viper"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
-
-	"github.com/op/go-logging"
-	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
 	"github.com/7574-sistemas-distribuidos/docker-compose-init/client/common"
 )
@@ -24,6 +22,11 @@ const (
 	BET_USER_BIRTH    = "NACIMIENTO"
 	BET_NUMBER        = "NUMERO"
 )
+
+const BETS_FILE_PATH = "agency-data.csv"
+const FILE_FIELDS_SEPARATOR = ","
+const BETS_CHANNEL_BUFFER_SIZE = 20
+const EOF_MESSAGE = "EOF"
 
 var log = logging.MustGetLogger("log")
 
@@ -46,9 +49,8 @@ func InitConfig() (*viper.Viper, error) {
 	// Add env variables supported
 	v.BindEnv("id")
 	v.BindEnv("server", "address")
-	v.BindEnv("loop", "period")
-	v.BindEnv("loop", "amount")
 	v.BindEnv("log", "level")
+	v.BindEnv("batch", "maxAmount")
 
 	// Try to read configuration from config file. If config file
 	// does not exists then ReadInConfig will fail but configuration
@@ -57,12 +59,6 @@ func InitConfig() (*viper.Viper, error) {
 	v.SetConfigFile("./config.yaml")
 	if err := v.ReadInConfig(); err != nil {
 		fmt.Printf("Configuration could not be read from config file. Using env variables instead")
-	}
-
-	// Parse time.Duration variables and return an error if those variables cannot be parsed
-
-	if _, err := time.ParseDuration(v.GetString("loop.period")); err != nil {
-		return nil, errors.Wrapf(err, "Could not parse CLI_LOOP_PERIOD env var as time.Duration.")
 	}
 
 	return v, nil
@@ -93,12 +89,11 @@ func InitLogger(logLevel string) error {
 // PrintConfig Print all the configuration parameters of the program.
 // For debugging purposes only
 func PrintConfig(v *viper.Viper) {
-	log.Infof("action: config | result: success | client_id: %s | server_address: %s | loop_amount: %v | loop_period: %v | log_level: %s",
+	log.Infof("action: config | result: success | client_id: %s | server_address: %s | log_level: %s | batch_maxAmount: %d",
 		v.GetString("id"),
 		v.GetString("server.address"),
-		v.GetInt("loop.amount"),
-		v.GetDuration("loop.period"),
 		v.GetString("log.level"),
+		v.GetInt("batch.maxAmount"),
 	)
 }
 
@@ -109,25 +104,55 @@ func signalHandler(client *common.Client, signalsChannel chan os.Signal, finishC
 	finishChannel <- true
 }
 
-func getBetEnvVariables() map[string]string {
+func parseBet(betRawData []string) map[string]string {
+	// Parses the bet info from the raw data read from the file and returns a map
 	betInfo := make(map[string]string)
 
 	betInfo[AGENCY_NUMBER] = os.Getenv(AGENCY_NUMBER)
-	betInfo[BET_USER_NAME] = os.Getenv(BET_USER_NAME)
-	betInfo[BET_USER_LASTNAME] = os.Getenv(BET_USER_LASTNAME)
-	betInfo[BET_USER_DOCUMENT] = os.Getenv(BET_USER_DOCUMENT)
-	betInfo[BET_USER_BIRTH] = os.Getenv(BET_USER_BIRTH)
-	betInfo[BET_NUMBER] = os.Getenv(BET_NUMBER)
+	betInfo[BET_USER_NAME] = betRawData[0]
+	betInfo[BET_USER_LASTNAME] = betRawData[1]
+	betInfo[BET_USER_DOCUMENT] = betRawData[2]
+	betInfo[BET_USER_BIRTH] = betRawData[3]
+	betInfo[BET_NUMBER] = betRawData[4]
+	betInfo[EOF_MESSAGE] = ""
 
-	// If any of the required variables is not set, return an error
+	// If any of the required fields is not complete, return an error
 	for key, value := range betInfo {
-		if value == "" {
+		if value == "" && key != EOF_MESSAGE {
 			log.Criticalf("action: get_bet_env_variables | result: fail | error: %s not set", key)
 			os.Exit(1)
 		}
 	}
 
 	return betInfo
+}
+
+func parseBetFile(filePath string, betsChannel chan map[string]string) {
+	// Reads the file and pushes the bet info to the betsChannel following a Producer / Consumer pattern
+	// The betsChannel is buffered to avoid overflowing the memory in cases where the consumer is slower than the producer or the file is very big
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Criticalf("action: open_bet_file | result: fail | error: %v", err)
+		os.Exit(1)
+	}
+	// Closes the file when the function ends or exits
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		betRawData := strings.Split(scanner.Text(), FILE_FIELDS_SEPARATOR)
+		betInfo := parseBet(betRawData)
+		betsChannel <- betInfo
+	}
+
+	// Send EOF message to the betsChannel to notify the client loop that there are no more bets to process
+	betsChannel <- map[string]string{EOF_MESSAGE: EOF_MESSAGE}
+
+	if err := scanner.Err(); err != nil {
+		log.Criticalf("action: read_bets_file | result: fail | error: %v", err)
+		os.Exit(1)
+	}
 }
 
 func main() {
@@ -152,19 +177,22 @@ func main() {
 	// Assign the signalsChannel to receive SIGINT and SIGTERM signals
 	signal.Notify(signalsChannel, syscall.SIGINT, syscall.SIGTERM)
 
-	betInfo := getBetEnvVariables()
+	// Channel used to send the parsed bets to the client loop
+	betsChannel := make(chan map[string]string, BETS_CHANNEL_BUFFER_SIZE)
 
 	clientConfig := common.ClientConfig{
 		ServerAddress: v.GetString("server.address"),
 		ID:            v.GetString("id"),
-		LoopAmount:    v.GetInt("loop.amount"),
-		LoopPeriod:    v.GetDuration("loop.period"),
+		BatchSize:     v.GetInt("batch.maxAmount"),
 	}
 
-	client := common.NewClient(clientConfig, betInfo)
+	client := common.NewClient(clientConfig)
 
 	// Create a goroutine to handle signals and notify the client loop to finish
 	go signalHandler(client, signalsChannel, finishChannel)
 
-	client.StartClientLoop(finishChannel)
+	// Go routine in charge of parsing the bets file and sending the parsed bets to the client loop
+	go parseBetFile(BETS_FILE_PATH, betsChannel)
+
+	client.StartClientLoop(finishChannel, betsChannel)
 }

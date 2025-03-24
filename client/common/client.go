@@ -3,10 +3,8 @@ package common
 import (
 	"bufio"
 	"fmt"
-	"net"
-	"time"
-
 	"github.com/op/go-logging"
+	"net"
 )
 
 var log = logging.MustGetLogger("log")
@@ -20,31 +18,30 @@ const (
 	BET_NUMBER        = "NUMERO"
 )
 
-const (
-	END_OF_MESSAGE_DELIMITER = '\n'
-)
+const END_OF_BATCH_DELIMITER = '@'
+const END_OF_BATCH_BET_DELIMITER = '\n'
+const BET_FIELD_DELIMITER = '#'
+const EOF_MESSAGE = "EOF"
+const MAX_MESSAGE_BYTE_SIZE = (8192 - 8) // 8KB - 8 bytes for the end of batch delimiter
 
 // ClientConfig Configuration used by the client
 type ClientConfig struct {
 	ID            string
 	ServerAddress string
-	LoopAmount    int
-	LoopPeriod    time.Duration
+	BatchSize     int
 }
 
 // Client Entity that encapsulates how
 type Client struct {
-	config  ClientConfig
-	conn    net.Conn
-	BetInfo map[string]string
+	config ClientConfig
+	conn   net.Conn
 }
 
 // NewClient Initializes a new client receiving the configuration
 // as a parameter
-func NewClient(config ClientConfig, betInfo map[string]string) *Client {
+func NewClient(config ClientConfig) *Client {
 	client := &Client{
-		config:  config,
-		BetInfo: betInfo,
+		config: config,
 	}
 	return client
 }
@@ -77,35 +74,69 @@ func (c *Client) FreeResources() {
 // field1#field2#...#field-n@
 // Meaning that the data separator is a hash (#) and the end of the line is a new line character (\n)
 
-func (c *Client) getSerializedBetInfo() string {
+func (c *Client) getSerializedBetInfo(betInfo map[string]string) string {
 	return fmt.Sprintf(
 		"%s#%s#%s#%s#%s#%s\n",
 		c.config.ID,
-		c.BetInfo[BET_USER_NAME],
-		c.BetInfo[BET_USER_LASTNAME],
-		c.BetInfo[BET_USER_DOCUMENT],
-		c.BetInfo[BET_USER_BIRTH],
-		c.BetInfo[BET_NUMBER],
+		betInfo[BET_USER_NAME],
+		betInfo[BET_USER_LASTNAME],
+		betInfo[BET_USER_DOCUMENT],
+		betInfo[BET_USER_BIRTH],
+		betInfo[BET_NUMBER],
 	)
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
-func (c *Client) StartClientLoop(finishChannel chan bool) {
-	// The message ID is defined outside the loop, and incremented inside of it while there are iterations remaining
-	msgID := 1
-
-	// There is an autoincremental msgID to identify every message sent
-	// Messages if the message amount threshold has not been surpassed
+func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[string]string) {
+	// Create an aux variable to store the messages that were not sent due to the max size being reached
+	// If present, the message will be sent in the next iteration as the head of the line message
+	unsentMessageDueToMaxSize := ""
+	// Variable used for login the number of bets sent to the server via this agency
+	sentBets := 0
 	for {
 		select {
 		case <-finishChannel:
 			log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
 			return
 		default:
-			if msgID > c.config.LoopAmount {
-				finishChannel <- true
-				break
+			// The initial value of the message is the unsent message from a previous iteration
+			messageToSend := unsentMessageDueToMaxSize
+			messagesAddedToBatch := 0
+
+			if unsentMessageDueToMaxSize != "" {
+				messagesAddedToBatch = 1
+				unsentMessageDueToMaxSize = ""
 			}
+
+			// Get bets until either:
+			// - The max batch size is reached
+			// - The max message size is reached
+			// - The EOF message is received
+			for {
+				betInfo := <-betsInfo
+
+				if betInfo[EOF_MESSAGE] == EOF_MESSAGE {
+					finishChannel <- true
+					break
+				}
+
+				serializedMessage := c.getSerializedBetInfo(betInfo)
+
+				// If the byte size of the message to send is greater than the max size, store the last message and end the loop
+				if len(messageToSend)+len(serializedMessage) > MAX_MESSAGE_BYTE_SIZE {
+					unsentMessageDueToMaxSize = serializedMessage
+					break
+				}
+
+				messageToSend += serializedMessage
+				messagesAddedToBatch++
+				if messagesAddedToBatch >= c.config.BatchSize {
+					break
+				}
+			}
+
+			// Add the end of batch delimiter to the message
+			messageToSend += string(END_OF_BATCH_DELIMITER)
 
 			// Create the connection the server in every loop iteration.
 			// Pickup errors if any
@@ -122,14 +153,13 @@ func (c *Client) StartClientLoop(finishChannel chan bool) {
 
 			// Send the serialized bet info to the server
 			// First get the byte len of the serialized bet info
-			serializedMessage := c.getSerializedBetInfo()
-			totalBytesLen := len(serializedMessage)
+			totalBytesLen := len(messageToSend)
 			bytesSent := 0
 
-			bytesSent, err = fmt.Fprintf(c.conn, "%s", serializedMessage)
+			bytesSent, err = fmt.Fprintf(c.conn, "%s", messageToSend)
 
 			for bytesSent < totalBytesLen {
-				bytesSent, err = fmt.Fprintf(c.conn, "%s", serializedMessage[bytesSent:])
+				bytesSent, err = fmt.Fprintf(c.conn, "%s", messageToSend[bytesSent:])
 				if err != nil {
 					log.Errorf("action: send_serialized_message | result: fail | client_id: %v | error: %v",
 						c.config.ID,
@@ -139,7 +169,7 @@ func (c *Client) StartClientLoop(finishChannel chan bool) {
 				}
 			}
 
-			_, err = bufio.NewReader(c.conn).ReadString(END_OF_MESSAGE_DELIMITER)
+			_, err = bufio.NewReader(c.conn).ReadString(END_OF_BATCH_DELIMITER)
 			c.conn.Close()
 
 			if err != nil {
@@ -150,16 +180,17 @@ func (c *Client) StartClientLoop(finishChannel chan bool) {
 				return
 			}
 
-			log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v",
-				c.BetInfo[BET_USER_DOCUMENT],
-				c.BetInfo[BET_NUMBER],
+			sentBets += messagesAddedToBatch
+
+			log.Infof("action: apuestas_enviada | result: success | client_id: %v | batch_size: %v | total_so_far: %v",
+				c.config.ID,
+				messagesAddedToBatch,
+				sentBets,
 			)
-
-			// Message ID incremented after successful loop iteration
-			msgID = msgID + 1
-
-			// Wait a time between sending one message and the next one
-			time.Sleep(c.config.LoopPeriod)
 		}
+
+		log.Infof("action: apuesta_recibida | result: success | cantidad: %v",
+			sentBets,
+		)
 	}
 }
