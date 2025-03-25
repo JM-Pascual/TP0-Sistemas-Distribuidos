@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/op/go-logging"
 	"net"
-	"time"
 )
 
 var log = logging.MustGetLogger("log")
@@ -22,6 +21,7 @@ const (
 const END_OF_BATCH_DELIMITER = '@'
 const END_OF_BATCH_BET_DELIMITER = '\n'
 const BET_FIELD_DELIMITER = '#'
+const END_OF_BETS_UPLOAD_MESSAGE = "AWAITING_RESULTS"
 const EOF_MESSAGE = "EOF"
 const MAX_MESSAGE_BYTE_SIZE = (8192 - 8) // 8KB - 8 bytes for the end of batch delimiter
 
@@ -188,7 +188,53 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 			sentBets,
 		)
 	}
+}
 
-	// Wait a time before exiting, allows for Docker to print the logs that are tested
-	time.Sleep(1000 * time.Millisecond)
+func (c *Client) AwaitForLotteryResults() {
+	err := c.createClientSocket()
+
+	if err != nil {
+		log.Errorf("action: createClientSocket | result: fail | client_id: %v | error: %v",
+			c.config.ID,
+			err,
+		)
+		return
+	}
+
+	awaitingResultsMessage := fmt.Sprintf("%s#%s#\n@", c.config.ID, END_OF_BETS_UPLOAD_MESSAGE)
+
+	totalBytesLen := len(awaitingResultsMessage)
+	bytesSent := 0
+
+	bytesSent, err = fmt.Fprintf(c.conn, "%s", awaitingResultsMessage)
+
+	for bytesSent < totalBytesLen {
+		bytesSent, err = fmt.Fprintf(c.conn, "%s", awaitingResultsMessage[bytesSent:])
+		if err != nil {
+			log.Errorf("action: send_awaiting_message | result: fail | client_id: %v | error: %v",
+				c.config.ID,
+				err,
+			)
+			return
+		}
+	}
+
+	// The client will wait for the lottery results to be sent by the server
+	lotteryResults, err := bufio.NewReader(c.conn).ReadString(END_OF_BATCH_DELIMITER)
+
+	if err != nil {
+		log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
+			c.config.ID,
+			err,
+		)
+		return
+	}
+
+	// Parses the received message knowing the format is:
+	// "amount_of_winners#\n"
+	amountOfWinners := lotteryResults[:len(lotteryResults)-2]
+
+	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v",
+		amountOfWinners,
+	)
 }

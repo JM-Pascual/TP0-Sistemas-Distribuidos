@@ -197,6 +197,8 @@ func main() {
 
 	client.StartClientLoop(finishChannel, betsChannel)
 
+	client.AwaitForLotteryResults()
+
 	// Wait a time before exiting, allows for Docker to print the logs that are tested
 	time.Sleep(1000 * time.Millisecond)
 }
