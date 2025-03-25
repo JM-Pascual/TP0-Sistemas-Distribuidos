@@ -1,3 +1,4 @@
+import os
 import signal
 import socket
 import logging
@@ -17,7 +18,7 @@ BET_USER_DOCUMENT_INDEX = 3
 BET_USER_BIRTH_INDEX = 4
 BET_NUMBER_INDEX = 5
 
-TOTAL_NUMBER_OF_CLIENTS = 5
+TOTAL_NUMBER_OF_CLIENTS = int(os.getenv('TOTAL_NUMBER_OF_CLIENTS'))
 
 
 class Server:

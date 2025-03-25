@@ -114,11 +114,13 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 			// - The max batch size is reached
 			// - The max message size is reached
 			// - The EOF message is received
+			shouldSkipIteration := false
 			for {
 				betInfo := <-betsInfo
 
 				if betInfo[EOF_MESSAGE] == EOF_MESSAGE {
 					finishChannel <- true
+					shouldSkipIteration = true
 					break
 				}
 
@@ -135,6 +137,10 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 				if messagesAddedToBatch >= c.config.BatchSize {
 					break
 				}
+			}
+
+			if shouldSkipIteration {
+				break
 			}
 
 			// Add the end of batch delimiter to the message

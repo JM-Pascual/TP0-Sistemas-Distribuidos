@@ -3,13 +3,15 @@ import sys
 file_header ="""name: tp0
 services:"""
 
-server_config = """
+def get_server_config(amount_of_clients):
+    return f"""
   server:
     container_name: server
     image: server:latest
     entrypoint: python3 /main.py
     environment:
       - PYTHONUNBUFFERED=1
+      - TOTAL_NUMBER_OF_CLIENTS={amount_of_clients}
     networks:
       - testing_net
     volumes:
@@ -45,7 +47,7 @@ def get_client_config(client_id):
 def create_docker_compose(number_of_clients, output_file_name):
     with open(output_file_name, "w") as f:
         f.write(file_header)
-        f.write(server_config)
+        f.write(get_server_config(number_of_clients))
         for i in range(number_of_clients):
             f.write(get_client_config(i+1))
         f.write(network_config)
