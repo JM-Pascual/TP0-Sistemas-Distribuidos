@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/op/go-logging"
+	"io"
 	"net"
 )
 
@@ -173,7 +174,7 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 			_, err = bufio.NewReader(c.conn).ReadString(END_OF_BATCH_DELIMITER)
 			c.conn.Close()
 
-			if err != nil {
+			if err != nil && err != io.EOF {
 				log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
 					c.config.ID,
 					err,
@@ -222,7 +223,7 @@ func (c *Client) AwaitForLotteryResults() {
 	// The client will wait for the lottery results to be sent by the server
 	lotteryResults, err := bufio.NewReader(c.conn).ReadString(END_OF_BATCH_DELIMITER)
 
-	if err != nil {
+	if err != nil && err != io.EOF {
 		log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
 			c.config.ID,
 			err,
