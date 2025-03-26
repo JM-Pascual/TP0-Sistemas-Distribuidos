@@ -102,6 +102,7 @@ class Server:
                     logging.info('action: sorteo | result: success')
                     self._perform_lottery()
                     self._free_clients_resources()
+                    self._server_socket.close()
                     self._server_working = False
                     continue
 
