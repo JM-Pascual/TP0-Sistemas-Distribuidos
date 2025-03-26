@@ -244,4 +244,6 @@ func (c *Client) AwaitForLotteryResults() {
 	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v",
 		amountOfWinners,
 	)
+
+	c.conn.Close()
 }
