@@ -95,6 +95,19 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 	unsentMessageDueToMaxSize := ""
 	// Variable used for login the number of bets sent to the server via this agency
 	sentBets := 0
+
+	// Creates the connection with server once the client is started
+	// Pickup errors if any
+	err := c.createClientSocket()
+
+	if err != nil {
+		log.Errorf("action: createClientSocket | result: fail | client_id: %v | error: %v",
+			c.config.ID,
+			err,
+		)
+		finishChannel <- true
+	}
+
 	for {
 		select {
 		case <-finishChannel:
@@ -146,19 +159,6 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 			// Add the end of batch delimiter to the message
 			messageToSend += string(END_OF_BATCH_DELIMITER)
 
-			// Create the connection the server in every loop iteration.
-			// Pickup errors if any
-			err := c.createClientSocket()
-
-			if err != nil {
-				log.Errorf("action: createClientSocket | result: fail | client_id: %v | error: %v",
-					c.config.ID,
-					err,
-				)
-				finishChannel <- true
-				break
-			}
-
 			// Send the serialized bet info to the server
 			// First get the byte len of the serialized bet info
 			totalBytesLen := len(messageToSend)
@@ -178,7 +178,6 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 			}
 
 			_, err = bufio.NewReader(c.conn).ReadString(END_OF_BATCH_DELIMITER)
-			c.conn.Close()
 
 			if err != nil && err != io.EOF {
 				log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
@@ -198,15 +197,7 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 }
 
 func (c *Client) AwaitForLotteryResults() {
-	err := c.createClientSocket()
-
-	if err != nil {
-		log.Errorf("action: createClientSocket | result: fail | client_id: %v | error: %v",
-			c.config.ID,
-			err,
-		)
-		return
-	}
+	var err error
 
 	awaitingResultsMessage := fmt.Sprintf("%s#%s#\n@", c.config.ID, END_OF_BETS_UPLOAD_MESSAGE)
 
@@ -244,4 +235,6 @@ func (c *Client) AwaitForLotteryResults() {
 	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v",
 		amountOfWinners,
 	)
+
+	c.conn.Close()
 }

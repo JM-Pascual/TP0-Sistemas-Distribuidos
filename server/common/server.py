@@ -2,8 +2,10 @@ import os
 import signal
 import socket
 import logging
+import threading
 
-from .utils import Bet, store_bets, load_bets, has_won
+from .utils import Bet
+from .bets_monitor import BetsMonitor
 
 MAX_RECV_BUFFER_SIZE = 1024
 FIELD_DELIMITER = "#"
@@ -30,8 +32,10 @@ class Server:
 
         # Initialize server state
         self._server_working = False
-        self._total_bets_registered = 0
-        self._active_agencies_skt = {str(i): None for i in range(1, TOTAL_NUMBER_OF_CLIENTS + 1)}
+        self._client_threads = []
+
+        # Initialize the monitor for the bets from the agencies
+        self.bets_monitor = BetsMonitor(TOTAL_NUMBER_OF_CLIENTS)
 
         # Initialize signal handlers
         # Declaration of the SIGTERM handler
@@ -41,9 +45,10 @@ class Server:
         signal.signal(signal.SIGINT, self.graceful_shutdown)
 
     def _free_clients_resources(self):
-        for agency_skt in self._active_agencies_skt.values():
-            if agency_skt is not None:
-                agency_skt.close()
+        """
+        Calls the public interface for freeing the clients resources allocated by the monitor
+        """
+        self.bets_monitor.free_clients_resources()
 
     def graceful_shutdown(self, signum, frame):
         # Closure of all the active agencies sockets
@@ -53,38 +58,18 @@ class Server:
         # Log the shutdown action
         logging.info('action: graceful_shutdown | result: success | signal number: {}'.format(signum))
 
-    def _ready_for_lottery(self):
+    def wait_for_lottery_time(self):
         """
-        Checks if the server is ready to perform the lottery
-
-        The server is ready to perform the lottery if all the agencies submitted their bets
-        For convenience this will be checked with having the open socket for each agency
-
-        Returns:
-        - bool: True if the server is ready to perform the lottery, False otherwise
+        Calls the public interface for waiting for the lottery time
         """
-
-        return all([agency_skt is not None for agency_skt in self._active_agencies_skt.values()])
-
-    def _perform_lottery(self):
-        """
-        Performs the lottery
-
-        The server will perform the lottery by checking all the bets stored
-        and will print the winners
-        """
-        winning_bets = [bet for bet in load_bets() if has_won(bet)]
-
-        winners_per_agency = {str(i): 0 for i in range(1, TOTAL_NUMBER_OF_CLIENTS + 1)}
-
-        for bet in winning_bets:
-            winners_per_agency[str(bet.agency)] += 1
-
-        for agency, winners_amount in winners_per_agency.items():
-            if self._active_agencies_skt[agency] is not None:
-                self._send_all_winners_data(self._active_agencies_skt[agency], str(winners_amount))
-            else:
-                logging.error(f"action: sorteo | result: fail | error: agency {agency} is not connected")
+        self.bets_monitor.wait_for_lottery_time(self.send_winners_data)
+        logging.info('action: sorteo | result: success')
+        self._server_working = False
+        # Shutdown the server socket to stop accepting new connections
+        # Raises an OSError exception in the main thread, but it's handled in the run method
+        self._server_socket.shutdown(socket.SHUT_RDWR)
+        self._server_socket.close()
+        self._free_clients_resources()
 
     def run(self):
         """
@@ -96,19 +81,29 @@ class Server:
 
         self._server_working = True
 
+        # Start the thread that will wait for the lottery time
+        lottery_thread = threading.Thread(target=self.wait_for_lottery_time)
+        lottery_thread.start()
+
+        # The thread running the run method will be responsible for accepting new connections
+        # The "Accept thead" will be responsible for handling the client connections starting the client threads
         try:
             while self._server_working:
-                if (self._ready_for_lottery()):
-                    logging.info('action: sorteo | result: success')
-                    self._perform_lottery()
-                    self._free_clients_resources()
-                    self._server_working = False
-                    continue
-
                 client_sock = self.__accept_new_connection()
-                self.__handle_client_connection(client_sock)
+                client_thread = threading.Thread(target=self.__handle_client_connection, args=(client_sock,))
+                client_thread.start()
+                self._client_threads.append(client_thread)
         except OSError as e:
-            logging.error(f"action: accepting new connections | result: fail | error: {e}")
+            if self._server_working:
+                logging.error(f"action: accepting new connections | result: fail | error: {e}")
+                self._server_working = False
+                self._server_socket.shutdown(socket.SHUT_RDWR)
+                self._server_socket.close()
+                self._free_clients_resources()
+        finally:
+            for thread in self._client_threads:
+                thread.join()
+            lottery_thread.join()
 
     def _recv_all_bet_data(self, client_sock):
         """
@@ -180,9 +175,10 @@ class Server:
         while total_bytes_sent < message_byte_len:
             total_bytes_sent += skt.send(message[total_bytes_sent:])
 
-    def _send_all_winners_data(self, agency_skt, winners_in_agency):
+    def send_winners_data(self, agency_skt, winners_in_agency):
         """
-        Sends the amount of winners from a given agency to the client
+        Provides a public interface to send the winners data to the agencies
+        Allows for sync in monitor but communication logic in server
         """
 
         encoded_message = bytes(f"{FIELD_DELIMITER.join([f'{winners_in_agency}'])}{END_OF_BET_DELIMITER}{END_OF_BATCH_DELIMITER}".encode('utf-8'))
@@ -204,30 +200,37 @@ class Server:
         If a problem arises in the communication with the client, the
         client socket will also be closed
         """
-        try:
-            bets_received = self._recv_all_bets(client_sock)
+        client_is_registering_bets = True
+        while client_is_registering_bets:
+            try:
+                bets_received = self._recv_all_bets(client_sock)
 
-            if AWAITING_RESULTS_MESSAGE in bets_received[0]:
+                if len(bets_received) == 0:
+                    logging.error(f"action: apuesta_recibida | result: fail | error: no bets received")
+                    client_sock.close()
+                    client_is_registering_bets = False
+                    continue
+
                 agency_id = bets_received[0][CLIENT_ID_INDEX]
-                self._active_agencies_skt[agency_id] = client_sock
-                return
 
-            store_bets([self._build_bet_object(bet) for bet in bets_received])
+                if AWAITING_RESULTS_MESSAGE in bets_received[0]:
+                    self.bets_monitor.notify_agency_awaiting_lottery(agency_id)
+                    client_is_registering_bets = False
+                    continue
 
-            bets_stored = len(bets_received)
-            self._total_bets_registered += bets_stored
+                self.bets_monitor.store_agency_bets(agency_id, client_sock, [self._build_bet_object(bet) for bet in bets_received])
 
-            logging.info(f'action: apuesta_recibida | result: success | cantidad: {bets_stored}')
+                bets_stored = len(bets_received)
 
-            self._send_all_batch_confirmation_data(client_sock, bets_stored)
+                logging.info(f'action: apuesta_recibida | result: success | cantidad: {bets_stored}')
 
-            client_sock.close()
+                self._send_all_batch_confirmation_data(client_sock, bets_stored)
 
-        except Exception as e:
-            logging.error(f"action: apuesta_recibida | result: fail | cantidad: {self._total_bets_registered} | error: {e}")
-            client_sock.close()
+            except Exception as e:
+                logging.error(f"action: apuesta_recibida | result: fail | cantidad: {self.bets_monitor.get_total_bets_registered()} | error: {e}")
+                client_sock.close()
 
-        logging.info(f'action: apuestas_recibidas | result: success | cantidad: {self._total_bets_registered}')
+        logging.info(f'action: apuestas_recibidas | result: success | cantidad: {self.bets_monitor.get_total_bets_registered()}')
 
     def __accept_new_connection(self):
         """
