@@ -40,13 +40,16 @@ class Server:
         # Declaration of the SIGINT handler
         signal.signal(signal.SIGINT, self.graceful_shutdown)
 
-    def graceful_shutdown(self, signum, frame):
-        # Closure of the server socket
-        self._server_socket.close()
-        # Closure of all the active agencies sockets
+    def _free_clients_resources(self):
         for agency_skt in self._active_agencies_skt.values():
             if agency_skt is not None:
                 agency_skt.close()
+
+    def graceful_shutdown(self, signum, frame):
+        # Closure of all the active agencies sockets
+        self._free_clients_resources()
+        # Closure of the server socket
+        self._server_socket.close()
         # Log the shutdown action
         logging.info('action: graceful_shutdown | result: success | signal number: {}'.format(signum))
 
@@ -98,7 +101,9 @@ class Server:
                 if (self._ready_for_lottery()):
                     logging.info('action: sorteo | result: success')
                     self._perform_lottery()
+                    self._free_clients_resources()
                     self._server_working = False
+                    continue
 
                 client_sock = self.__accept_new_connection()
                 self.__handle_client_connection(client_sock)
