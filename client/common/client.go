@@ -152,7 +152,7 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 				}
 			}
 
-			if shouldSkipIteration {
+			if shouldSkipIteration && messagesAddedToBatch == 0 {
 				break
 			}
 
@@ -173,6 +173,7 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 						c.config.ID,
 						err,
 					)
+					c.conn.Close()
 					return
 				}
 			}
@@ -184,6 +185,7 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 					c.config.ID,
 					err,
 				)
+				c.conn.Close()
 				return
 			}
 
@@ -225,6 +227,7 @@ func (c *Client) AwaitForLotteryResults() {
 			c.config.ID,
 			err,
 		)
+		c.conn.Close()
 		return
 	}
 
@@ -233,6 +236,7 @@ func (c *Client) AwaitForLotteryResults() {
 			c.config.ID,
 			"invalid lottery results",
 		)
+		c.conn.Close()
 		return
 	}
 
