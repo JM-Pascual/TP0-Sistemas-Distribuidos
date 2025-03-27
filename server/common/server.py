@@ -268,6 +268,5 @@ class Server:
         finally:
             for thread in self._client_threads:
                 thread.join()
-                logging.info(f"action: client_thread | result: success | thread_id: {thread.ident}")
             self._client_threads = []
             lottery_thread.join()
