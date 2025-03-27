@@ -138,8 +138,8 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 				}
 			}
 
-            // If the iteration should be skipped, break the loop so that an empty message is not sent
-			if shouldSkipIteration {
+			// If the iteration should be skipped, break the loop so that an empty message is not sent
+			if shouldSkipIteration && messagesAddedToBatch == 0 {
 				break
 			}
 
@@ -189,11 +189,10 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 			}
 
 			sentBets += messagesAddedToBatch
+			log.Infof("action: apuesta_validada | result: success | cantidad: %v",
+				sentBets,
+			)
 		}
-
-		log.Infof("action: apuesta_validada | result: success | cantidad: %v",
-			sentBets,
-		)
 	}
 
 	// Wait a time before exiting, allows for Docker to print the logs that are tested
