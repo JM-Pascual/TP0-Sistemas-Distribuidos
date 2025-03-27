@@ -1,5 +1,6 @@
 import threading
 import logging
+import socket
 from .utils import Bet, store_bets, load_bets, has_won
 
 class BetsMonitor:
@@ -63,6 +64,11 @@ class BetsMonitor:
 
         Should receive a function that encodes the data to be sent to the clients
         """
+
+        if all(agency_skt[1] is None for agency_skt in self._active_agencies_skt.values()):
+            # Probably the lock was released due to shutdown, so we should return and avoid using closed sockets
+            return
+
         winning_bets = [bet for bet in load_bets() if has_won(bet)]
 
         winners_per_agency = {str(i): 0 for i in range(1, self._clients_amount + 1)}
@@ -92,5 +98,18 @@ class BetsMonitor:
         for agency_data in self._active_agencies_skt.values():
             agency_skt = agency_data[1]
             if agency_skt is not None:
+                # Shutdown the socket in case the client is blocked in a recv call
+                agency_skt.shutdown(socket.SHUT_RDWR)
+                # Close the socket
                 agency_skt.close()
-        logging.info("action: cerrar_conexiones | result: success")
+
+        self._active_agencies_skt = {str(i): (False, None) for i in range(1, self._clients_amount + 1)}
+
+    def shutdown(self):
+        """
+        closes all the active agencies sockets and releases the lock
+        """
+        self.free_clients_resources()
+        # Calls notify to unlock threads that may be locked waiting for the lottery conditional variable
+        with self._lock:
+            self._lottery_time.notify_all()

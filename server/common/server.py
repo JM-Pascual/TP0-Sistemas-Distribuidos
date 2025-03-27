@@ -22,7 +22,6 @@ BET_NUMBER_INDEX = 5
 
 TOTAL_NUMBER_OF_CLIENTS = int(os.getenv('TOTAL_NUMBER_OF_CLIENTS'))
 
-
 class Server:
     def __init__(self, port, listen_backlog):
         # Initialize server socket
@@ -49,61 +48,34 @@ class Server:
         Calls the public interface for freeing the clients resources allocated by the monitor
         """
         self.bets_monitor.free_clients_resources()
+        self._reap_clients()
+
+    def _free_resources_on_shutdown(self):
+        """
+        Calls the public interface for freeing the resources allocated by the monitor on shutdown
+        This differs from the free_clients_resources method as it also aims to unlock all the threads in the program
+        for successful complete shutdown
+        """
+        self.bets_monitor.shutdown()
+
+    def _reap_clients(self):
+        """
+        Reaps the client threads that have finished and removes them from the list
+        """
+        for client_thread in self._client_threads:
+            if not client_thread.is_alive():
+                client_thread.join()
+        self._client_threads = [client_thread for client_thread in self._client_threads if client_thread.is_alive()]
 
     def graceful_shutdown(self, signum, frame):
         # Closure of all the active agencies sockets
-        self._free_clients_resources()
+        self._free_resources_on_shutdown()
+        self._server_working = False
         # Closure of the server socket
+        self._server_socket.shutdown(socket.SHUT_RDWR)
         self._server_socket.close()
         # Log the shutdown action
         logging.info('action: graceful_shutdown | result: success | signal number: {}'.format(signum))
-
-    def wait_for_lottery_time(self):
-        """
-        Calls the public interface for waiting for the lottery time
-        """
-        self.bets_monitor.wait_for_lottery_time(self.send_winners_data)
-        logging.info('action: sorteo | result: success')
-        self._server_working = False
-        # Shutdown the server socket to stop accepting new connections
-        # Raises an OSError exception in the main thread, but it's handled in the run method
-        self._server_socket.shutdown(socket.SHUT_RDWR)
-        self._server_socket.close()
-        self._free_clients_resources()
-
-    def run(self):
-        """
-        Agency Server loop
-
-        The server will listen and accept new connections from clients
-        Then the bets reported will be stored
-        """
-
-        self._server_working = True
-
-        # Start the thread that will wait for the lottery time
-        lottery_thread = threading.Thread(target=self.wait_for_lottery_time)
-        lottery_thread.start()
-
-        # The thread running the run method will be responsible for accepting new connections
-        # The "Accept thead" will be responsible for handling the client connections starting the client threads
-        try:
-            while self._server_working:
-                client_sock = self.__accept_new_connection()
-                client_thread = threading.Thread(target=self.__handle_client_connection, args=(client_sock,))
-                client_thread.start()
-                self._client_threads.append(client_thread)
-        except OSError as e:
-            if self._server_working:
-                logging.error(f"action: accepting new connections | result: fail | error: {e}")
-                self._server_working = False
-                self._server_socket.shutdown(socket.SHUT_RDWR)
-                self._server_socket.close()
-                self._free_clients_resources()
-        finally:
-            for thread in self._client_threads:
-                thread.join()
-            lottery_thread.join()
 
     def _recv_all_bet_data(self, client_sock):
         """
@@ -193,6 +165,20 @@ class Server:
         encoded_message = bytes(f"{FIELD_DELIMITER.join([f'Success on receiving {bets_received} bets'])}{END_OF_BET_DELIMITER}{END_OF_BATCH_DELIMITER}".encode('utf-8'))
         self._send_all(client_sock, encoded_message)
 
+    def wait_for_lottery_time(self):
+        """
+        Calls the public interface for waiting for the lottery time
+        """
+        while self._server_working:
+            self.bets_monitor.wait_for_lottery_time(self.send_winners_data)
+
+            # It's possible that the server was shutdown while waiting for the lottery time and was unlocked by the shutdown
+            # In that case, do not log the lottery success message
+            if self._server_working:
+                logging.info('action: sorteo | result: success')
+
+            self._free_clients_resources()
+
     def __handle_client_connection(self, client_sock):
         """
         Read message from a specific client socket and closes the socket
@@ -243,5 +229,45 @@ class Server:
         # Connection arrived
         logging.info('action: accept_connections | result: in_progress')
         c, addr = self._server_socket.accept()
+
+        # It's a good practice to reap the zombie/dead threads after accepting a new connection
+        self._reap_clients()
+
         logging.info(f'action: accept_connections | result: success | ip: {addr[0]}')
         return c
+
+    def run(self):
+        """
+        Agency Server loop
+
+        The server will listen and accept new connections from clients
+        Then the bets reported will be stored
+        """
+
+        self._server_working = True
+
+        # Start the thread that will wait for the lottery time
+        lottery_thread = threading.Thread(target=self.wait_for_lottery_time)
+        lottery_thread.start()
+
+        # The thread running the run method will be responsible for accepting new connections
+        # The "Accept thead" will be responsible for handling the client connections starting the client threads
+        try:
+            while self._server_working:
+                client_sock = self.__accept_new_connection()
+                client_thread = threading.Thread(target=self.__handle_client_connection, args=(client_sock,))
+                client_thread.start()
+                self._client_threads.append(client_thread)
+        except OSError as e:
+            if self._server_working:
+                logging.error(f"action: accepting new connections | result: fail | error: {e}")
+                self._free_resources_on_shutdown()
+                self._server_working = False
+                self._server_socket.shutdown(socket.SHUT_RDWR)
+                self._server_socket.close()
+        finally:
+            for thread in self._client_threads:
+                thread.join()
+                logging.info(f"action: client_thread | result: success | thread_id: {thread.ident}")
+            self._client_threads = []
+            lottery_thread.join()
