@@ -40,20 +40,24 @@ class Server:
         # Declaration of the SIGINT handler
         signal.signal(signal.SIGINT, self.graceful_shutdown)
 
-    def _free_clients_resources(self):
+    def __free_clients_resources(self):
         for agency_skt in self._active_agencies_skt.values():
             if agency_skt is not None:
                 agency_skt.close()
+        # Reset the active agencies sockets so that we're not stuck in a lottery loop
+        self._active_agencies_skt = {str(i): None for i in range(1, TOTAL_NUMBER_OF_CLIENTS + 1)}
 
     def graceful_shutdown(self, signum, frame):
         # Closure of all the active agencies sockets
-        self._free_clients_resources()
+        self.__free_clients_resources()
+        # Signal that the server is no longer working
+        self._server_working = False
         # Closure of the server socket
         self._server_socket.close()
         # Log the shutdown action
         logging.info('action: graceful_shutdown | result: success | signal number: {}'.format(signum))
 
-    def _ready_for_lottery(self):
+    def __ready_for_lottery(self):
         """
         Checks if the server is ready to perform the lottery
 
@@ -66,7 +70,7 @@ class Server:
 
         return all([agency_skt is not None for agency_skt in self._active_agencies_skt.values()])
 
-    def _perform_lottery(self):
+    def __perform_lottery(self):
         """
         Performs the lottery
 
@@ -82,7 +86,7 @@ class Server:
 
         for agency, winners_amount in winners_per_agency.items():
             if self._active_agencies_skt[agency] is not None:
-                self._send_all_winners_data(self._active_agencies_skt[agency], str(winners_amount))
+                self.__send_all_winners_data(self._active_agencies_skt[agency], str(winners_amount))
             else:
                 logging.error(f"action: sorteo | result: fail | error: agency {agency} is not connected")
 
@@ -98,20 +102,23 @@ class Server:
 
         try:
             while self._server_working:
-                if (self._ready_for_lottery()):
+                if (self.__ready_for_lottery()):
+                    self.__perform_lottery()
                     logging.info('action: sorteo | result: success')
-                    self._perform_lottery()
-                    self._free_clients_resources()
-                    self._server_socket.close()
-                    self._server_working = False
-                    continue
+                    self.__free_clients_resources()
 
                 client_sock = self.__accept_new_connection()
                 self.__handle_client_connection(client_sock)
         except OSError as e:
             logging.error(f"action: accepting new connections | result: fail | error: {e}")
+            # If the server did not mark itself as not working, it means that the error was not caused by a shutdown
+            if self._server_working:
+                self._server_working = False
+                self.__free_clients_resources()
+                self._server_socket.close()
 
-    def _recv_all_bet_data(self, client_sock):
+
+    def __recv_all_bet_data(self, client_sock):
         """
         Receives all the data from the client, handling short-reads
         """
@@ -122,7 +129,7 @@ class Server:
 
         return raw_bet_data
 
-    def _parse_submitted_bets(self, raw_bets):
+    def __parse_submitted_bets(self, raw_bets):
         """
         Decodes the message received from the client
 
@@ -139,7 +146,7 @@ class Server:
 
         return [bet.split(FIELD_DELIMITER) for bet in raw_bets[:-1].split(END_OF_BET_DELIMITER)]
 
-    def _build_bet_object(self, decoded_message_array):
+    def __build_bet_object(self, decoded_message_array):
         """
         Builds a Bet object from the decoded message array
 
@@ -158,19 +165,19 @@ class Server:
             decoded_message_array[BET_NUMBER_INDEX]
         )
 
-    def _recv_all_bets(self, client_sock):
+    def __recv_all_bets(self, client_sock):
         """
         Receives all the data from the client, and parses it into single bets
         """
-        raw_batch_data = self._recv_all_bet_data(client_sock)
+        raw_batch_data = self.__recv_all_bet_data(client_sock)
 
         raw_bets_data = raw_batch_data.decode('utf-8')[:-1]
 
-        bets_data = self._parse_submitted_bets(raw_bets_data)
+        bets_data = self.__parse_submitted_bets(raw_bets_data)
 
         return bets_data
 
-    def _send_all(self, skt, message):
+    def __send_all(self, skt, message):
         """
         Sends a message to a given socket with short write handling
         """
@@ -181,22 +188,22 @@ class Server:
         while total_bytes_sent < message_byte_len:
             total_bytes_sent += skt.send(message[total_bytes_sent:])
 
-    def _send_all_winners_data(self, agency_skt, winners_in_agency):
+    def __send_all_winners_data(self, agency_skt, winners_in_agency):
         """
         Sends the amount of winners from a given agency to the client
         """
 
         encoded_message = bytes(f"{FIELD_DELIMITER.join([f'{winners_in_agency}'])}{END_OF_BET_DELIMITER}{END_OF_BATCH_DELIMITER}".encode('utf-8'))
-        self._send_all(agency_skt, encoded_message)
+        self.__send_all(agency_skt, encoded_message)
 
 
-    def _send_all_batch_confirmation_data(self, client_sock, bets_received):
+    def __send_all_batch_confirmation_data(self, client_sock, bets_received):
         """
         Sends the confirmation message to the client to let them know the batch was received
         """
 
         encoded_message = bytes(f"{FIELD_DELIMITER.join([f'Success on receiving {bets_received} bets'])}{END_OF_BET_DELIMITER}{END_OF_BATCH_DELIMITER}".encode('utf-8'))
-        self._send_all(client_sock, encoded_message)
+        self.__send_all(client_sock, encoded_message)
 
     def __handle_client_connection(self, client_sock):
         """
@@ -206,21 +213,21 @@ class Server:
         client socket will also be closed
         """
         try:
-            bets_received = self._recv_all_bets(client_sock)
+            bets_received = self.__recv_all_bets(client_sock)
 
             if AWAITING_RESULTS_MESSAGE in bets_received[0]:
                 agency_id = bets_received[0][CLIENT_ID_INDEX]
                 self._active_agencies_skt[agency_id] = client_sock
                 return
 
-            store_bets([self._build_bet_object(bet) for bet in bets_received])
+            store_bets([self.__build_bet_object(bet) for bet in bets_received])
 
             bets_stored = len(bets_received)
             self._total_bets_registered += bets_stored
 
             logging.info(f'action: apuesta_recibida | result: success | cantidad: {bets_stored}')
 
-            self._send_all_batch_confirmation_data(client_sock, bets_stored)
+            self.__send_all_batch_confirmation_data(client_sock, bets_stored)
 
             client_sock.close()
 

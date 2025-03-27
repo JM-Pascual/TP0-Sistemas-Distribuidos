@@ -237,6 +237,14 @@ func (c *Client) AwaitForLotteryResults() {
 		return
 	}
 
+	if len(lotteryResults) < 2 {
+		log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
+			c.config.ID,
+			"invalid lottery results",
+		)
+		return
+	}
+
 	// Parses the received message knowing the format is:
 	// "amount_of_winners#\n"
 	amountOfWinners := lotteryResults[:len(lotteryResults)-2]
