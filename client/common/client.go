@@ -139,7 +139,7 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 				}
 			}
 
-			if shouldSkipIteration {
+			if shouldSkipIteration && messagesAddedToBatch == 0 {
 				break
 			}
 
@@ -185,15 +185,15 @@ func (c *Client) StartClientLoop(finishChannel chan bool, betsInfo chan map[stri
 					c.config.ID,
 					err,
 				)
+				c.conn.Close()
 				return
 			}
 
 			sentBets += messagesAddedToBatch
+			log.Infof("action: apuesta_validada | result: success | cantidad: %v",
+				sentBets,
+			)
 		}
-
-		log.Infof("action: apuesta_validada | result: success | cantidad: %v",
-			sentBets,
-		)
 	}
 }
 
